@@ -6,6 +6,8 @@
 #include <iostream>
 #include <random>
 
+constexpr std::size_t VECTOR_SIZE = 16;
+
 void fillRandomMatrix(float *const matrix, const std::size_t n,
                       const float min_val, const float max_val) {
   std::random_device rd;
@@ -18,32 +20,40 @@ void fillRandomMatrix(float *const matrix, const std::size_t n,
 }
 
 void softmaxSequential(const float *input_matrix, float *const output_matrix,
-                     const std::size_t n) {
+                       const std::size_t n) {
   for (std::size_t i = 0; i < n; ++i) {
     float sum_exp = 0.0f;
+    const float *row_in = input_matrix + i * n;
+    float *const row_out = output_matrix + i * n;
 
     for (std::size_t j = 0; j < n; ++j) {
-      output_matrix[i * n + j] = std::exp(input_matrix[i * n + j]);
-      sum_exp += output_matrix[i * n + j];
+      row_out[j] = std::exp(row_in[j]);
+      sum_exp += row_out[j];
     }
+
+    const float sum_exp_inv = 1.0f / sum_exp;
     for (std::size_t j = 0; j < n; ++j) {
-      output_matrix[i * n + j] /= sum_exp;
+      row_out[j] *= sum_exp_inv;
     }
   }
 }
 
 void softmaxParallel(const float *input_matrix, float *const output_matrix,
                      const std::size_t n) {
-#pragma omp parallel for
+#pragma omp parallel for schedule(static) proc_bind(close)
   for (std::size_t i = 0; i < n; ++i) {
     float sum_exp = 0.0f;
+    const float *row_in = input_matrix + i * n;
+    float *const row_out = output_matrix + i * n;
 
     for (std::size_t j = 0; j < n; ++j) {
-      output_matrix[i * n + j] = std::exp(input_matrix[i * n + j]);
-      sum_exp += output_matrix[i * n + j];
+      row_out[j] = std::exp(row_in[j]);
+      sum_exp += row_out[j];
     }
+
+    const float sum_exp_inv = 1.0f / sum_exp;
     for (std::size_t j = 0; j < n; ++j) {
-      output_matrix[i * n + j] /= sum_exp;
+      row_out[j] *= sum_exp_inv;
     }
   }
 }
@@ -52,43 +62,47 @@ void softmaxSimd(const float *input_matrix, float *const output_matrix,
                  const std::size_t n) {
   for (std::size_t i = 0; i < n; ++i) {
     float sum_exp = 0.0f;
+    const float *row_in = input_matrix + i * n;
+    float *const row_out = output_matrix + i * n;
 
-    for (std::size_t j = 0; j < n / 16; ++j) {
-      __m512 elems = _mm512_load_ps(input_matrix + i * 16);
+    const std::size_t size = n / VECTOR_SIZE * VECTOR_SIZE;
+    for (std::size_t j = 0; j < size; j += VECTOR_SIZE) {
+      __m512 elems = _mm512_load_ps(row_in + j);
       __m512 exps = _mm512_exp_ps(elems);
       sum_exp += _mm512_reduce_add_ps(exps);
-      _mm512_store_ps(output_matrix + i * 16, exps);
+      _mm512_store_ps(row_out + j, exps);
     }
 
-    __m512 sum_exp_vec = _mm512_set1_ps(sum_exp);
+    const __m512 sum_exp_vec = _mm512_set1_ps(sum_exp);
 
-    for (std::size_t j = 0; j < n / 16; ++j) {
-      __m512 elems = _mm512_load_ps(output_matrix + j * 16);
-      __m512 divs = _mm512_div_ps(elems, sum_exp_vec);
-      _mm512_store_ps(output_matrix + j * 16, divs);
+    for (std::size_t j = 0; j < size; j += VECTOR_SIZE) {
+      __m512 elems = _mm512_load_ps(row_out + j);
+      _mm512_store_ps(row_out + j, _mm512_div_ps(elems, sum_exp_vec));
     }
   }
 }
 
 void softmaxParallelSimd(const float *input_matrix, float *const output_matrix,
                          const std::size_t n) {
-#pragma omp parallel for
+#pragma omp parallel for schedule(dynamic, 16) proc_bind(close)
   for (std::size_t i = 0; i < n; ++i) {
     float sum_exp = 0.0f;
+    const float *row_in = input_matrix + i * n;
+    float *row_out = output_matrix + i * n;
 
-    for (std::size_t j = 0; j < n / 16; ++j) {
-      __m512 elems = _mm512_load_ps(input_matrix + i * 16);
+    const std::size_t size = n / VECTOR_SIZE * VECTOR_SIZE;
+    for (std::size_t j = 0; j < size; j += VECTOR_SIZE) {
+      __m512 elems = _mm512_load_ps(row_in + j);
       __m512 exps = _mm512_exp_ps(elems);
       sum_exp += _mm512_reduce_add_ps(exps);
-      _mm512_store_ps(output_matrix + i * 16, exps);
+      _mm512_store_ps(row_out + j, exps);
     }
 
-    __m512 sum_exp_vec = _mm512_set1_ps(sum_exp);
+    const __m512 sum_exp_vec = _mm512_set1_ps(sum_exp);
 
-    for (std::size_t j = 0; j < n / 16; ++j) {
-      __m512 elems = _mm512_load_ps(output_matrix + j * 16);
-      __m512 divs = _mm512_div_ps(elems, sum_exp_vec);
-      _mm512_store_ps(output_matrix + j * 16, divs);
+    for (std::size_t j = 0; j < size; j += VECTOR_SIZE) {
+      __m512 elems = _mm512_load_ps(row_out + j);
+      _mm512_store_ps(row_out + j, _mm512_div_ps(elems, sum_exp_vec));
     }
   }
 }
@@ -143,7 +157,8 @@ int main(int argc, char *argv[]) {
   const double start_par_simd = omp_get_wtime();
   softmaxParallelSimd(matrix, res_par_simd, n);
   const double end_par_simd = omp_get_wtime();
-  std::cout << "Parallel Simd time: " << end_par_simd - start_par_simd << std::endl;
+  std::cout << "Parallel Simd time: " << end_par_simd - start_par_simd
+            << std::endl;
   delete[] res_par_simd;
 
   delete[] res_seq;
