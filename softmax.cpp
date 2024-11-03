@@ -1,6 +1,7 @@
 #include <immintrin.h>
 #include <omp.h>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -40,7 +41,7 @@ void softmaxSequential(const float *input_matrix, float *const output_matrix,
 
 void softmaxParallel(const float *input_matrix, float *const output_matrix,
                      const std::size_t n) {
-#pragma omp parallel for schedule(static) proc_bind(close)
+#pragma omp parallel for schedule(static)
   for (std::size_t i = 0; i < n; ++i) {
     float sum_exp = 0.0f;
     const float *row_in = input_matrix + i * n;
@@ -84,11 +85,11 @@ void softmaxSimd(const float *input_matrix, float *const output_matrix,
 
 void softmaxParallelSimd(const float *input_matrix, float *const output_matrix,
                          const std::size_t n) {
-#pragma omp parallel for schedule(dynamic, 16) proc_bind(close)
+#pragma omp parallel for schedule(dynamic, 16)
   for (std::size_t i = 0; i < n; ++i) {
     float sum_exp = 0.0f;
     const float *row_in = input_matrix + i * n;
-    float *row_out = output_matrix + i * n;
+    float *const row_out = output_matrix + i * n;
 
     const std::size_t size = n / VECTOR_SIZE * VECTOR_SIZE;
     for (std::size_t j = 0; j < size; j += VECTOR_SIZE) {
@@ -122,45 +123,62 @@ void softmaxParallelSimd(const float *input_matrix, float *const output_matrix,
 //   }
 // }
 
+void printExecutionTime(const char *label,
+                        void (*softmax_func)(const float *, float *const,
+                                             const std::size_t),
+                        const float *input_matrix, float *const output_matrix,
+                        const std::size_t n) {
+  const double start = omp_get_wtime();
+  softmax_func(input_matrix, output_matrix, n);
+  const double end = omp_get_wtime();
+  std::cout << label << " time: " << end - start << " ";
+}
+
+void printMaxDifference(const float *a, const float *b, const std::size_t n) {
+  float max_difference = 0.0f;
+
+  for (std::size_t i = 0; i < n; ++i) {
+    max_difference = std::max(max_difference, std::abs(a[i] - b[i]));
+  }
+
+  std::cout << "(diff: " << max_difference << ")" << std::endl;
+}
+
 int main(int argc, char *argv[]) {
   if (argc != 2) {
     std::cerr << "Usage: " << argv[0] << " <matrix_size>\n";
     return 1;
   }
   const std::size_t n = std::stoul(argv[1]);
-  auto *matrix = new float[n * n];
-  fillRandomMatrix(matrix, n, 0.1f, 100.0f);
+  float *input_matrix = new float[n * n];
+  fillRandomMatrix(input_matrix, n, 0.1f, 100.0f);
 
-  float *res_seq = new float[n * n];
-  const auto start_seq = std::chrono::high_resolution_clock::now();
-  softmaxSequential(matrix, res_seq, n);
-  const std::chrono::duration<double> duration_seq =
-      std::chrono::high_resolution_clock::now() - start_seq;
-  std::cout << "Sequential time: " << duration_seq.count() << std::endl;
+  float *seq_output_matrix = new float[n * n];
+  printExecutionTime("Sequential", softmaxSequential, input_matrix,
+                     seq_output_matrix, n);
+  printMaxDifference(seq_output_matrix, seq_output_matrix, n);
 
-  float *res_par = new float[n * n];
-  const double start_par = omp_get_wtime();
-  softmaxParallel(matrix, res_par, n);
-  const double end_par = omp_get_wtime();
-  std::cout << "Parallel time: " << end_par - start_par << std::endl;
-  delete[] res_par;
+  float *par_output_matrix = new float[n * n];
+  printExecutionTime("Parallel", softmaxParallel, input_matrix,
+                     par_output_matrix, n);
+  printMaxDifference(seq_output_matrix, par_output_matrix, n);
+  delete[] par_output_matrix;
 
-  float *res_simd = new float[n * n];
-  const auto start_simd = std::chrono::high_resolution_clock::now();
-  softmaxSimd(matrix, res_simd, n);
-  const std::chrono::duration<double> duration_simd =
-      std::chrono::high_resolution_clock::now() - start_simd;
-  std::cout << "Simd time: " << duration_simd.count() << std::endl;
-  delete[] res_simd;
+  float *simd_output_matrix = new float[n * n];
+  printExecutionTime("Simd", softmaxSimd, input_matrix, simd_output_matrix, n);
+  printMaxDifference(seq_output_matrix, simd_output_matrix, n);
+  delete[] simd_output_matrix;
 
-  float *res_par_simd = new float[n * n];
-  const double start_par_simd = omp_get_wtime();
-  softmaxParallelSimd(matrix, res_par_simd, n);
-  const double end_par_simd = omp_get_wtime();
-  std::cout << "Parallel Simd time: " << end_par_simd - start_par_simd
-            << std::endl;
-  delete[] res_par_simd;
+  float *par_simd_output_matrix = new float[n * n];
+  printExecutionTime("Parallel Simd", softmaxParallelSimd, input_matrix,
+                     par_simd_output_matrix, n);
+  printMaxDifference(seq_output_matrix, par_simd_output_matrix, n);
+  delete[] par_simd_output_matrix;
 
-  delete[] res_seq;
-  delete[] matrix;
+  // float *simt_output_matrix = new float[n * n];
+  // printExecutionTime("Simt", softmaxSimt, input_matrix, output_matrix, n);
+  // delete[] simt_output_matrix;
+
+  delete[] seq_output_matrix;
+  delete[] input_matrix;
 }
