@@ -196,8 +196,8 @@ static void softmaxCuda(const float* input_matrix, float* output_matrix,
   softmaxKernel<<<blocks_per_grid, threads_per_block, shared_memory_size>>>(
       d_input, d_output, n);
 
-  cudaEventRecord(stop);
   cudaEventSynchronize(stop);
+  cudaEventRecord(stop);
 
   float milliseconds = 0;
   cudaEventElapsedTime(&milliseconds, start, stop);
@@ -251,23 +251,27 @@ int main(int argc, char* argv[]) {
   float* par_output_matrix = new float[n * n];
   printExecutionTime("Parallel", softmaxParallel, input_matrix,
                      par_output_matrix, n);
+  std::cout << std::endl;
   printMaxDifference(seq_output_matrix, par_output_matrix, n);
   delete[] par_output_matrix;
 
   float* vec_output_matrix = new float[n * n];
   printExecutionTime("Vectorized", softmaxVectorized, input_matrix,
                      vec_output_matrix, n);
+  std::cout << std::endl;
   printMaxDifference(seq_output_matrix, vec_output_matrix, n);
   delete[] vec_output_matrix;
 
   float* par_vec_output_matrix = new float[n * n];
   printExecutionTime("Parallel Vectorized", softmaxParallelVectorized,
                      input_matrix, par_vec_output_matrix, n);
+  std::cout << std::endl;
   printMaxDifference(seq_output_matrix, par_vec_output_matrix, n);
   delete[] par_vec_output_matrix;
 
   float* cuda_output_matrix = new float[n * n];
   softmaxCuda(input_matrix, cuda_output_matrix, n);
+  std::cout << std::endl;
   printMaxDifference(seq_output_matrix, cuda_output_matrix, n);
   delete[] cuda_output_matrix;
 
